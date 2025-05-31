@@ -1,81 +1,134 @@
 <script lang="ts" setup>
 import ListItem from './ListItem.vue'
 import { ref, onMounted, computed } from 'vue'
-import { Ref } from 'vue'
 
-const storageItems: Ref<Item[]> = ref([])
-type Item = {
+const apiUrl = 'http://localhost:3000/tasks'
+
+interface Item {
+  id: number
   title: string
-  checked?: boolean
+  checked: boolean
 }
-const initListItems = (): void => {
-  if (storageItems.value?.length === 0) {
-    const listItems = [
-      { title: 'Make a todo list app', checked: true },
-      { title: 'Predict the weather', checked: false },
-      { title: 'Read some comics', checked: false },
-      { title: "Let's get cooking", checked: false },
-      { title: 'Pump some iron', checked: false },
-      { title: 'Track my expenses', checked: false },
-      { title: 'Organise a game night', checked: false },
-      { title: 'Learn a new language', checked: false },
-      { title: 'Publish my work' },
-    ]
-    setToStorage(listItems)
-    storageItems.value = listItems
+
+const items = ref<Item[]>([])
+const newTaskTitle = ref('')
+const editingId = ref<number | null>(null)
+
+const fetchTasks = async () => {
+  const res = await fetch(apiUrl)
+  items.value = await res.json()
+}
+
+const addTask = async () => {
+  if (!newTaskTitle.value.trim()) return
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: newTaskTitle.value, checked: false }),
+  })
+  const newTask = await res.json()
+  items.value.push(newTask)
+  newTaskTitle.value = ''
+}
+
+const editTask = (id: number) => {
+  const task = items.value.find((item) => item.id === id)
+  if (!task) return
+  newTaskTitle.value = task.title
+  editingId.value = id
+}
+
+const saveEdit = async () => {
+  if (editingId.value === null || !newTaskTitle.value.trim()) return
+  const res = await fetch(`${apiUrl}/${editingId.value}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: newTaskTitle.value }),
+  })
+  if (res.ok) {
+    const idx = items.value.findIndex((item) => item.id === editingId.value)
+    if (idx !== -1) items.value[idx].title = newTaskTitle.value
+    newTaskTitle.value = ''
+    editingId.value = null
   }
 }
 
-const updateItem = (item: Item): void => {
-  const updatedItem = findItemInList(item)
-  if (updatedItem) {
-    toggleItemChecked(updatedItem)
-    setToStorage(storageItems.value)
-  }
+const deleteTask = async (id: number) => {
+  await fetch(`${apiUrl}/${id}`, { method: 'DELETE' })
+  items.value = items.value.filter((item) => item.id !== id)
 }
-const findItemInList = (item: Item): Item | undefined => {
-  return storageItems.value.find((itemInList: Item) => itemInList.title === item.title)
-}
-const toggleItemChecked = (item: Item): void => {
-  item.checked = !item.checked
+
+const toggleChecked = async (item: Item) => {
+  const updated = { ...item, checked: !item.checked }
+  await fetch(`${apiUrl}/${item.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ checked: updated.checked }),
+  })
+  item.checked = updated.checked
 }
 
 const sortedList = computed(() =>
-  [...storageItems.value].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0)),
+  [...items.value].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0)),
 )
 
-const setToStorage = (items: Item[]): void => {
-  localStorage.setItem('list-items', JSON.stringify(items))
-}
-const getFromStorage = (): Item[] | [] => {
-  const stored = localStorage.getItem('list-items')
-  if (stored) {
-    return JSON.parse(stored)
-  }
-  return []
-}
-
-onMounted(() => {
-  initListItems()
-  storageItems.value = getFromStorage()
-})
+onMounted(fetchTasks)
 </script>
 
 <template>
-  <ul>
-    <li :key="key" v-for="(item, key) in sortedList">
-      <ListItem :is-checked="item.checked" v-on:click.prevent="updateItem(item)">{{
-        item.title
-      }}</ListItem>
-    </li>
-  </ul>
+  <div class="main container py-4">
+    <div class="row justify-content-center">
+      <div class="col-md-8">
+        <form class="input-group mb-4" @submit.prevent="editingId ? saveEdit() : addTask()">
+          <input v-model="newTaskTitle" class="form-control" placeholder="Nueva tarea" />
+          <button class="btn btn-primary" type="submit">
+            {{ editingId ? 'Guardar' : 'Agregar' }}
+          </button>
+          <button
+            v-if="editingId"
+            class="btn btn-secondary ms-2"
+            type="button"
+            @click="
+              () => {
+                editingId = null
+                newTaskTitle = ''
+              }
+            "
+          >
+            Cancelar
+          </button>
+        </form>
+        <ul class="list-group">
+          <li
+            v-for="item in sortedList"
+            :key="item.id"
+            class="list-group-item d-flex align-items-center justify-content-between"
+          >
+            <div class="d-flex align-items-center">
+              <ListItem :is-checked="item.checked" @click.prevent="toggleChecked(item)">
+                {{ item.title }}
+              </ListItem>
+            </div>
+            <button class="btn btn-primary btn-sm" @click="editTask(item.id)">Editar</button>
+            <button class="btn btn-danger btn-sm" @click="deleteTask(item.id)">Eliminar</button>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-ul {
-  list-style: none;
+.list-group-item {
+  transition: background 0.2s;
 }
-li {
-  margin: 0.4rem 0;
+.list-group-item:hover {
+  background: #f8f9fa;
+}
+.input-group input {
+  border-radius: 0.375rem 0 0 0.375rem;
+}
+.input-group .btn {
+  border-radius: 0 0.375rem 0.375rem 0;
 }
 </style>
